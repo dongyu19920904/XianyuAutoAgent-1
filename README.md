@@ -88,6 +88,34 @@ python main.py
 - `tech_prompt.txt`: 技术专家提示词
 - `default_prompt.txt`: 默认回复提示词
 
+### 自定义模型
+
+默认情况下，系统使用的语言模型硬编码在 `XianyuAgent.py` 文件中。
+
+要更改模型，请编辑 `XianyuAgent.py` 文件，找到 `_call_llm` 方法 (以及可能的其他 agent 类中重写的类似方法)，并修改其中的 `model` 参数。
+
+例如，要将模型更改为 `google/gemini-2.0-flash-exp:free`，你需要将类似以下的代码行：
+
+```python
+response = self.client.chat.completions.create(
+    model="deepseek/deepseek-chat-v3-0324:free", # <--- 修改这里
+    messages=messages,
+    # ... 其他参数
+)
+```
+
+修改为：
+
+```python
+response = self.client.chat.completions.create(
+    model="google/gemini-2.0-flash-exp:free", # <--- 修改这里
+    messages=messages,
+    # ... 其他参数
+)
+```
+
+**注意:** 请确保你的 API Key 和 `base_url` (如果使用了代理) 与你选择的模型兼容。
+
 ## 🤝 参与贡献
 
 欢迎通过 Issue 提交建议或 PR 贡献代码，请遵循 [贡献指南](https://contributing.md/)

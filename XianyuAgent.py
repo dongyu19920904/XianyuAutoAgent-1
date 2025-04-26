@@ -10,47 +10,44 @@ class XianyuReplyBot:
         # 初始化OpenAI客户端
         self.client = OpenAI(
             api_key=os.getenv("OPENAI_API_KEY"),
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            base_url="https://openrouter.ai/api/v1"
         )
         self._init_system_prompts()
         self._init_agents()
         self.router = IntentRouter(self.agents['classify'])
         self.last_intent = None  # 记录最后一次意图
 
-
     def _init_agents(self):
         """初始化各领域Agent"""
         self.agents = {
-            'classify':ClassifyAgent(self.client, self.classify_prompt, self._safe_filter),
-            'price': PriceAgent(self.client, self.price_prompt, self._safe_filter),
-            'tech': TechAgent(self.client, self.tech_prompt, self._safe_filter),
-            'default': DefaultAgent(self.client, self.default_prompt, self._safe_filter),
+            'classify': ClassifyAgent(self.client, self.prompts['classify'], self._safe_filter),
+            'price': PriceAgent(self.client, self.prompts['price'], self._safe_filter),
+            'tech': TechAgent(self.client, self.prompts['tech'], self._safe_filter),
+            'default': DefaultAgent(self.client, self.prompts['default'], self._safe_filter),
+            'prompt_info': PromptInfoAgent(self.client, self.prompts['prompt_info'], self._safe_filter),
+            'course_info': CourseInfoAgent(self.client, self.prompts['course_info'], self._safe_filter),
         }
 
     def _init_system_prompts(self):
         """初始化各Agent专用提示词，直接从文件中加载"""
         prompt_dir = "prompts"
+        prompt_files = {
+            'classify': "classify_prompt.txt",
+            'price': "price_prompt.txt",
+            'tech': "tech_prompt.txt",
+            'default': "default_prompt.txt",
+            'prompt_info': "prompt_info_prompt.txt",
+            'course_info': "course_info_prompt.txt"
+        }
+        
+        self.prompts = {}
         
         try:
-            # 加载分类提示词
-            with open(os.path.join(prompt_dir, "classify_prompt.txt"), "r", encoding="utf-8") as f:
-                self.classify_prompt = f.read()
-                logger.debug(f"已加载分类提示词，长度: {len(self.classify_prompt)} 字符")
-            
-            # 加载价格提示词
-            with open(os.path.join(prompt_dir, "price_prompt.txt"), "r", encoding="utf-8") as f:
-                self.price_prompt = f.read()
-                logger.debug(f"已加载价格提示词，长度: {len(self.price_prompt)} 字符")
-            
-            # 加载技术提示词
-            with open(os.path.join(prompt_dir, "tech_prompt.txt"), "r", encoding="utf-8") as f:
-                self.tech_prompt = f.read()
-                logger.debug(f"已加载技术提示词，长度: {len(self.tech_prompt)} 字符")
-            
-            # 加载默认提示词
-            with open(os.path.join(prompt_dir, "default_prompt.txt"), "r", encoding="utf-8") as f:
-                self.default_prompt = f.read()
-                logger.debug(f"已加载默认提示词，长度: {len(self.default_prompt)} 字符")
+            # 使用循环加载所有提示词
+            for key, filename in prompt_files.items():
+                with open(os.path.join(prompt_dir, filename), "r", encoding="utf-8") as f:
+                    self.prompts[key] = f.read()
+                    logger.debug(f"已加载{key}提示词，长度: {len(self.prompts[key])} 字符")
                 
             logger.info("成功加载所有提示词")
         except Exception as e:
@@ -79,10 +76,7 @@ class XianyuReplyBot:
         # 1. 路由决策
         detected_intent = self.router.detect(user_msg, item_desc, formatted_context)
 
-
-
         # 2. 获取对应Agent
-
         internal_intents = {'classify'}  # 定义不对外开放的Agent
 
         if detected_intent in self.agents and detected_intent not in internal_intents:
@@ -150,6 +144,14 @@ class IntentRouter:
             'price': {
                 'keywords': ['便宜', '价', '砍价', '少点'],
                 'patterns': [r'\d+元', r'能少\d+']
+            },
+            'prompt_info': {
+                'keywords': ['提示词', '指令', 'prompt', '预设'],
+                'patterns': [r'有哪些提示词', r'提示词怎么用']
+            },
+            'course_info': {
+                'keywords': ['课程', '教程', '学习', '培训'],
+                'patterns': [r'如何学习', r'怎么学']
             }
         }
         self.classify_agent = classify_agent
@@ -170,17 +172,32 @@ class IntentRouter:
                 return 'tech'
 
         # 3. 价格类检查
-        for intent in ['price']:
-            if any(kw in text_clean for kw in self.rules[intent]['keywords']):
-                # logger.debug(f"价格类关键词匹配: {[kw for kw in self.rules[intent]['keywords'] if kw in text_clean]}")
-                return intent
-            
-            for pattern in self.rules[intent]['patterns']:
-                if re.search(pattern, text_clean):
-                    # logger.debug(f"价格类正则匹配: {pattern}")
-                    return intent
+        if any(kw in text_clean for kw in self.rules['price']['keywords']):
+            # logger.debug(f"价格类关键词匹配: {[kw for kw in self.rules['price']['keywords'] if kw in text_clean]}")
+            return 'price'
         
-        # 4. 大模型兜底
+        for pattern in self.rules['price']['patterns']:
+            if re.search(pattern, text_clean):
+                # logger.debug(f"价格类正则匹配: {pattern}")
+                return 'price'
+                
+        # 4. 提示词信息类检查
+        if any(kw in text_clean for kw in self.rules['prompt_info']['keywords']):
+            return 'prompt_info'
+            
+        for pattern in self.rules['prompt_info']['patterns']:
+            if re.search(pattern, text_clean):
+                return 'prompt_info'
+                
+        # 5. 课程信息类检查
+        if any(kw in text_clean for kw in self.rules['course_info']['keywords']):
+            return 'course_info'
+            
+        for pattern in self.rules['course_info']['patterns']:
+            if re.search(pattern, text_clean):
+                return 'course_info'
+        
+        # 6. 大模型兜底
         # logger.debug("使用大模型进行意图分类")
         return self.classify_agent.generate(
             user_msg=user_msg,
@@ -213,13 +230,25 @@ class BaseAgent:
     def _call_llm(self, messages: List[Dict], temperature: float = 0.4) -> str:
         """调用大模型"""
         response = self.client.chat.completions.create(
-            model="qwen-max",
+            model="deepseek/deepseek-r1:free",
             messages=messages,
             temperature=temperature,
             max_tokens=500,
             top_p=0.8
         )
         return response.choices[0].message.content
+
+
+class PromptInfoAgent(BaseAgent):
+    """介绍提示词合集的Agent"""
+    # 通常直接使用 BaseAgent 的 generate 即可，因为它会用自己的 system_prompt
+    pass
+
+
+class CourseInfoAgent(BaseAgent):
+    """介绍AI课程资料的Agent"""
+    # 通常直接使用 BaseAgent 的 generate 即可
+    pass
 
 
 class PriceAgent(BaseAgent):
@@ -232,7 +261,7 @@ class PriceAgent(BaseAgent):
         messages[0]['content'] += f"\n▲当前议价轮次：{bargain_count}"
 
         response = self.client.chat.completions.create(
-            model="qwen-max",
+            model="deepseek/deepseek-chat-v3-0324:free",
             messages=messages,
             temperature=dynamic_temp,
             max_tokens=500,
@@ -253,7 +282,7 @@ class TechAgent(BaseAgent):
         # messages[0]['content'] += "\n▲知识库：\n" + self._fetch_tech_specs()
 
         response = self.client.chat.completions.create(
-            model="qwen-max",
+            model="deepseek/deepseek-chat-v3-0324:free",
             messages=messages,
             temperature=0.4,
             max_tokens=500,
